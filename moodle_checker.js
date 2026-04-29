@@ -14,9 +14,10 @@ var WORKER_SOURCES=[
 function norm(s){
   return s.toUpperCase()
     .replace(/РАЗДЕЛ\s+([IVXIVX\d]+)\./gi,'РАЗДЕЛ $1')
+    .replace(/ТЕМА\s+([IVXIVX\d]+)\./gi,'ТЕМА $1')
     .replace(/\s*\([\d\s]+ЧАС[А-Я]*\)/g,'')
     .replace(/\s*[-–]\s*\d+\s*СЕМ[А-Я]*/g,'')
-    .replace(/[«»""]/g,'').replace(/\s+/g,' ').trim();
+    .replace(/[«»"""']/g,'').replace(/\s+/g,' ').trim();
 }
 function sim(a,b){
   var A=new Set(a.split(/\s+/).filter(function(w){return w.length>2;}));
@@ -32,7 +33,9 @@ function esc(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').repl
 function getMoodle(){
   var r=[],seen=new Set();
   document.querySelectorAll('.panel-title a,.accordion-toggle,.sectionname,.section-title').forEach(function(el){
-    var t=el.textContent.trim();
+    // Пропускаем названия активностей (элементов курса), берём только заголовки секций
+    if(el.closest('li.activity')) return;
+    var t=el.textContent.trim().replace(/^["«»""']+|["«»""']+$/g,'').trim();
     if(t&&!/^общее$/i.test(t)&&!seen.has(t)){seen.add(t);r.push(t);}
   });
   return r;
@@ -76,16 +79,23 @@ function getSections(txt){
   }
 
   // Паттерн 2: Тема N. — только первое вхождение каждого номера
+  // Не используем \b — оно не работает с кириллицей в JS
   var tSeen=new Set();
-  var tRe=/\bТема\s+(\d+)\s*[.\-]\s*([А-ЯЁA-Z][^]*?)(?=\s+\d+\s+\d+|\s*\/[А-ЯЁ]|\s*Тема\s+\d+\s*[.\-]|$)/gi;
+  var tRe=/Тема\s+(\d+)\s*\.\s*/gi;
   while((m=tRe.exec(chunk))!==null){
-    if(tSeen.has(m[1]))continue;
-    tSeen.add(m[1]);
-    var tName=clean(m[2]);
+    var tNum=m[1];
+    if(tSeen.has(tNum))continue;
+    tSeen.add(tNum);
+    var rest=chunk.slice(m.index+m[0].length);
+    // Обрезаем по часам (числа подряд) или по /Лек/ /Пр/ и т.п.
+    var stopIdx=rest.search(/\s+\d+\s+\d+\s+\d+|\s*\/[А-ЯЁ]/);
+    var tName=stopIdx>0?rest.slice(0,stopIdx):rest.slice(0,250);
+    tName=clean(tName).replace(/\.+\s*$/,'').trim();
     if(tName.length<5||tName.length>250)continue;
+    if(!/^[А-ЯЁA-Z]/i.test(tName))continue;
     // Тема (prio:1) вытесняет Раздел (prio:0) с тем же номером
-    if(!byNum[m[1]]||byNum[m[1]].prio<1)
-      byNum[m[1]]={label:'Тема '+m[1]+'. '+tName,prio:1};
+    if(!byNum[tNum]||byNum[tNum].prio<1)
+      byNum[tNum]={label:'Тема '+tNum+'. '+tName,prio:1};
   }
 
   var r=[],seen=new Set();
