@@ -106,14 +106,33 @@ function getSections(txt){
   return r;
 }
 
+function sectionNum(s){
+  var m=s.match(/^(?:Раздел|Тема)\s+(\d+)/i);
+  return m?m[1]:null;
+}
+
 function compare(txt,moodle){
   var ps=getSections(txt);
   var mn=moodle.map(function(s){return{o:s,n:norm(s)};});
   var matched=[],onlyPdf=[],onlyMoodle=[],used=new Set();
   ps.map(function(s){return{o:s,n:norm(s)};}).forEach(function(p){
     var best=null,bsc=0;
+    // 1. Сначала пробуем совпадение по словам
     mn.forEach(function(m,i){var sc=sim(p.n,m.n);if(sc>bsc){bsc=sc;best={i:i,m:m};}});
-    if(bsc>0.5){matched.push({p:p.o,m:best.m.o,sc:bsc});used.add(best.i);}
+    // 2. Если слабое совпадение — ищем по номеру (Раздел 1 = Тема 1)
+    if(bsc<=0.5){
+      var pNum=sectionNum(p.o);
+      if(pNum){
+        mn.forEach(function(m,i){
+          if(used.has(i))return;
+          if(sectionNum(m.o)===pNum&&!best||
+             (sectionNum(m.o)===pNum&&bsc<=0.5)){
+            bsc=0.6;best={i:i,m:m};
+          }
+        });
+      }
+    }
+    if(bsc>0.5&&best){matched.push({p:p.o,m:best.m.o,sc:bsc});used.add(best.i);}
     else onlyPdf.push(p.o);
   });
   mn.forEach(function(m,i){if(!used.has(i))onlyMoodle.push(m.o);});
