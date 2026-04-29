@@ -80,12 +80,18 @@ function findGeneralSection(){
     '.accordion-heading,.panel-title'
   ).forEach(function(el){
     if(!general && /^общее$/i.test(el.textContent.trim())){
-      // Идём вверх до контейнера секции
-      var p=el;
-      for(var i=0;i<6;i++){
-        if(p.parentElement) p=p.parentElement;
+      // Поднимаемся до ближайшего li.section (li#section-0)
+      var section=el.closest('li.section')||el.closest('[id^="section-"]');
+      if(section){
+        general=section;
+      } else {
+        // fallback: идём вверх до 4 уровней
+        var p=el;
+        for(var i=0;i<4;i++){
+          if(p.parentElement) p=p.parentElement;
+        }
+        general=p;
       }
-      general=p;
     }
   });
   return general;
