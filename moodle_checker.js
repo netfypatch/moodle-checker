@@ -31,7 +31,7 @@ function getMoodle(){
   var r=[],seen=new Set();
   document.querySelectorAll('.panel-title a,.accordion-toggle,.sectionname,.section-title').forEach(function(el){
     var t=el.textContent.trim();
-    if(t&&/раздел/i.test(t)&&!seen.has(t)){seen.add(t);r.push(t);}
+    if(t&&!/^общее$/i.test(t)&&!seen.has(t)){seen.add(t);r.push(t);}
   });
   return r;
 }
