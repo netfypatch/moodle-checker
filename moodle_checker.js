@@ -44,13 +44,33 @@ function getMoodle(){
 function getSections(txt){
   var start=txt.search(/4\.\s*(СТРУКТУРА|СОДЕРЖАНИЕ)/i);
   if(start<0) start=txt.search(/СТРУКТУРА\s+И\s+СОДЕРЖАНИЕ/i);
-  var chunk=start>=0?txt.slice(start,start+20000):txt.slice(0,20000);
-  var r=[],seen=new Set(),re=/Раздел\s+([IVXivx\d]+)[.\s]+([^\n\r.]{5,120})/gi,m;
+
+  var chunk=start>=0?txt.slice(start,start+30000):txt.slice(0,30000);
+
+  var r=[],seen=new Set();
+
+  var re=/Раздел\s+(\d+)\s*\.?\s*(?:Раздел\s+[IVXLCDM\d]+\s*\.?\s*)?([А-ЯЁA-Z][^]*?)(?=(?:\s+\d+\.\d+\s)|(?:\s+Раздел\s+\d+\s*\.?\s*(?:Раздел\s+[IVXLCDM\d]+\s*\.?\s*)?)|(?:\s+5\.\s)|$)/gi;
+
+  var m;
   while((m=re.exec(chunk))!==null){
-    var t='Раздел '+m[1]+'. '+m[2].replace(/\s+/g,' ').trim();
+    var name=m[2]
+      .replace(/\s+/g,' ')
+      .replace(/\s+\d+\s+\d+\s+\d+.*$/,'')
+      .trim();
+
+    name=name.split(/ Краткое содержание:| Результаты освоения| Предполагаемые результаты| \/Лек\/| \/Пр\/| \/Ср\//i)[0].trim();
+
+    if(name.length<5) continue;
+
+    var t='Раздел '+m[1]+'. '+name;
     var k=norm(t);
-    if(!seen.has(k)){seen.add(k);r.push(t);}
+
+    if(!seen.has(k)){
+      seen.add(k);
+      r.push(t);
+    }
   }
+
   return r;
 }
 
