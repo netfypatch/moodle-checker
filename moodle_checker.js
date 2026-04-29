@@ -55,18 +55,44 @@ function getSections(txt){
   var start=txt.search(/4\.\s*(СТРУКТУРА|СОДЕРЖАНИЕ)/i);
   if(start<0) start=txt.search(/СТРУКТУРА\s+И\s+СОДЕРЖАНИЕ/i);
   var chunk=start>=0?txt.slice(start,start+30000):txt.slice(0,30000);
-  var r=[],seen=new Set();
+
+  // Собираем по номеру; "Тема N." имеет приоритет над "Раздел N."
+  var byNum={};
+
+  function clean(s){
+    return s.replace(/\s+/g,' ')
+      .replace(/\s+\d+\s+\d+\s+\d+.*$/,'')
+      .split(/ Краткое содержание:| Результаты освоения| Предполагаемые результаты| \/Лек\/| \/Пр\/| \/Ср\//i)[0]
+      .trim();
+  }
+
+  // Паттерн 1: Раздел N.
   var re=/Раздел\s+(\d+)\s*\.?\s*(?:Раздел\s+[IVXLCDM\d]+\s*\.?\s*)?([А-ЯЁA-Z][^]*?)(?=(?:\s+\d+\.\d+\s)|(?:\s+Раздел\s+\d+\s*\.?\s*(?:Раздел\s+[IVXLCDM\d]+\s*\.?\s*)?)|(?:\s+5\.\s)|$)/gi;
   var m;
   while((m=re.exec(chunk))!==null){
-    var name=m[2].replace(/\s+/g,' ')
-      .replace(/\s+\d+\s+\d+\s+\d+.*$/,'').trim();
-    name=name.split(/ Краткое содержание:| Результаты освоения| Предполагаемые результаты| \/Лек\/| \/Пр\/| \/Ср\//i)[0].trim();
-    if(name.length<5) continue;
-    var t='Раздел '+m[1]+'. '+name;
-    var k=norm(t);
-    if(!seen.has(k)){seen.add(k);r.push(t);}
+    var name=clean(m[2]);
+    if(name.length>=5&&!byNum[m[1]])
+      byNum[m[1]]={label:'Раздел '+m[1]+'. '+name,prio:0};
   }
+
+  // Паттерн 2: Тема N. — только первое вхождение каждого номера
+  var tSeen=new Set();
+  var tRe=/\bТема\s+(\d+)\s*[.\-]\s*([А-ЯЁA-Z][^]*?)(?=\s+\d+\s+\d+|\s*\/[А-ЯЁ]|\s*Тема\s+\d+\s*[.\-]|$)/gi;
+  while((m=tRe.exec(chunk))!==null){
+    if(tSeen.has(m[1]))continue;
+    tSeen.add(m[1]);
+    var tName=clean(m[2]);
+    if(tName.length<5||tName.length>250)continue;
+    // Тема (prio:1) вытесняет Раздел (prio:0) с тем же номером
+    if(!byNum[m[1]]||byNum[m[1]].prio<1)
+      byNum[m[1]]={label:'Тема '+m[1]+'. '+tName,prio:1};
+  }
+
+  var r=[],seen=new Set();
+  Object.keys(byNum).sort(function(a,b){return+a-+b;}).forEach(function(k){
+    var n=norm(byNum[k].label);
+    if(!seen.has(n)){seen.add(n);r.push(byNum[k].label);}
+  });
   return r;
 }
 
@@ -248,8 +274,9 @@ function parseHours(txt){
 
   return{
     sems:sems,
-    lekNums:extractNums('Лекции','Практическ'),
-    pracNums:extractNums('Практическ[а-яё]*','Итого\\s+ауд|Контактная')
+    lekNums:extractNums('Лекции','Практическ|Лаборатор'),
+    pracNums:extractNums('Практическ[а-яё]*','Лаборатор|Итого\\s+ауд|Контактная'),
+    labNums:extractNums('Лаборатор[а-яё]*','Итого\\s+ауд|Контактная')
   };
 }
 
@@ -428,6 +455,14 @@ function renderHours(hours){
   for(var i=0;i<N;i++)h+='<div class="__mc-htd __mc-htd-c">'+rpAt(hours.pracNums,i)+' ч.</div>';
   h+='<div class="__mc-htd __mc-htd-c __mc-htd-tot">'+rpTotal(hours.pracNums)+' ч.</div>';
   h+='</div>';
+  // Лабораторные (только если есть хоть одно ненулевое значение)
+  if(hours.labNums&&hours.labNums.some(function(n){return n>0;})){
+    h+='<div class="__mc-htr">';
+    h+='<div class="__mc-htd __mc-htd-l">Лабораторные</div>';
+    for(var i=0;i<N;i++)h+='<div class="__mc-htd __mc-htd-c">'+rpAt(hours.labNums,i)+' ч.</div>';
+    h+='<div class="__mc-htd __mc-htd-c __mc-htd-tot">'+rpTotal(hours.labNums)+' ч.</div>';
+    h+='</div>';
+  }
   h+='</div>';
   h+='<p class="__mc-hrs-note">* РП — рабочая программа</p>';
   hoursEl.innerHTML=h;
