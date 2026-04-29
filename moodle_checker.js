@@ -1,7 +1,17 @@
+cat > /home/claude/moodle_v11.js << 'ENDJS'
 (function(){
 
-var PDFJS_URL='https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js';
-var WORKER_URL='https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+// Несколько источников PDF.js — пробуем по очереди
+var PDFJS_SOURCES=[
+  'https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.min.js',
+  'https://unpkg.com/pdfjs-dist@3.11.174/build/pdf.min.js',
+  'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js'
+];
+var WORKER_SOURCES=[
+  'https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.worker.min.js',
+  'https://unpkg.com/pdfjs-dist@3.11.174/build/pdf.worker.min.js',
+  'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js'
+];
 
 // ── УТИЛИТЫ ─────────────────────────────────────────────────────────────────
 
@@ -59,63 +69,56 @@ function compare(txt,moodle){
   return{matched:matched,onlyPdf:onlyPdf,onlyMoodle:onlyMoodle,total:ps.length};
 }
 
-// ── PDF.JS — простая надёжная загрузка ──────────────────────────────────────
+// ── PDF.JS — пробуем все источники по очереди ───────────────────────────────
 
 function loadPdfJs(callback){
-  // Проверка что pdfjsLib полностью готов
-  function ready(){
-    return window.pdfjsLib
-      && typeof window.pdfjsLib.getDocument === 'function'
-      && window.pdfjsLib.GlobalWorkerOptions;
-  }
-
-  if(ready()){
-    try{window.pdfjsLib.GlobalWorkerOptions.workerSrc=WORKER_URL;}catch(e){}
-    callback(null);return;
-  }
-
-  // Если на странице уже есть pdfjsLib (от Moodle) но без GlobalWorkerOptions
   if(window.pdfjsLib && typeof window.pdfjsLib.getDocument === 'function'){
-    // используем как есть, без worker
+    if(window.pdfjsLib.GlobalWorkerOptions){
+      try{window.pdfjsLib.GlobalWorkerOptions.workerSrc=WORKER_SOURCES[0];}catch(e){}
+    }
     callback(null);return;
   }
 
-  // Загружаем заново
-  var existing=document.getElementById('__mcpdfjs__');
-  if(existing){
-    pollPdfJs(callback);return;
-  }
-
-  var s=document.createElement('script');
-  s.id='__mcpdfjs__';
-  s.src=PDFJS_URL;
-  s.onload=function(){pollPdfJs(callback);};
-  s.onerror=function(){callback(new Error('Не удалось загрузить PDF.js (возможно блокирует CSP)'));};
-  document.head.appendChild(s);
-}
-
-function pollPdfJs(callback){
-  var tries=0;
-  var t=setInterval(function(){
-    if(window.pdfjsLib && typeof window.pdfjsLib.getDocument === 'function'){
-      clearInterval(t);
-      try{
-        if(window.pdfjsLib.GlobalWorkerOptions){
-          window.pdfjsLib.GlobalWorkerOptions.workerSrc=WORKER_URL;
-        }
-      }catch(e){}
-      callback(null);
-    } else if(++tries>100){
-      clearInterval(t);
-      callback(new Error('PDF.js не инициализировался'));
+  var idx=0;
+  function tryNext(){
+    if(idx>=PDFJS_SOURCES.length){
+      callback(new Error('Все CDN заблокированы. Попробуйте отключить блокировщики или использовать другой браузер.'));
+      return;
     }
-  },100);
+    setStatus('Пробую источник '+(idx+1)+'/'+PDFJS_SOURCES.length+'…','i');
+    var s=document.createElement('script');
+    s.src=PDFJS_SOURCES[idx];
+    s.onload=function(){
+      // ждём инициализации
+      var tries=0;
+      var t=setInterval(function(){
+        if(window.pdfjsLib && typeof window.pdfjsLib.getDocument === 'function'){
+          clearInterval(t);
+          try{
+            if(window.pdfjsLib.GlobalWorkerOptions){
+              window.pdfjsLib.GlobalWorkerOptions.workerSrc=WORKER_SOURCES[idx];
+            }
+          }catch(e){}
+          callback(null);
+        } else if(++tries>30){
+          clearInterval(t);
+          s.parentNode && s.parentNode.removeChild(s);
+          idx++;tryNext();
+        }
+      },100);
+    };
+    s.onerror=function(){
+      s.parentNode && s.parentNode.removeChild(s);
+      idx++;tryNext();
+    };
+    document.head.appendChild(s);
+  }
+  tryNext();
 }
 
 function readPdf(buf,onDone,onErr){
   try{
-    var task=window.pdfjsLib.getDocument({data:buf});
-    task.promise.then(function(pdf){
+    window.pdfjsLib.getDocument({data:buf}).promise.then(function(pdf){
       var limit=Math.min(pdf.numPages,15);
       var results=new Array(limit);
       var done=0;
@@ -140,14 +143,13 @@ function analyze(pdf,moodle){
   fetch(pdf.url,{credentials:'include'})
     .then(function(r){if(!r.ok)throw new Error('HTTP '+r.status);return r.arrayBuffer();})
     .then(function(buf){
-      setStatus('Загружаю PDF.js…','i');
       loadPdfJs(function(err){
         if(err){setStatus(err.message,'e');setBody('');return;}
-        setStatus('Читаю текст…','i');
+        setStatus('Читаю текст PDF…','i');
         readPdf(buf,function(txt){
           var r=compare(txt,moodle);
           renderResults(r);
-          setStatus('Готово · разделов: '+r.total,'ok');
+          setStatus('Готово · разделов в PDF: '+r.total,'ok');
         },function(e){setStatus('Ошибка: '+(e&&e.message||'разбор PDF'),'e');setBody('');});
       });
     })
@@ -281,10 +283,8 @@ function injectStyles(){
   if(document.getElementById('__mcstyle__'))return;
   var s=document.createElement('style');
   s.id='__mcstyle__';
-  // Все стили под уникальным префиксом __mc — никаких "all:initial"
-  // Используем !important где нужно перебить стили Moodle
   s.textContent=[
-    '#__mc__{position:fixed!important;top:0!important;right:0!important;width:420px!important;height:100vh!important;',
+    '#__mc__{position:fixed!important;top:0!important;right:0!important;width:440px!important;height:100vh!important;',
     'display:flex!important;flex-direction:column!important;background:#FAFAFA!important;',
     'font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif!important;font-size:13px!important;',
     'z-index:2147483647!important;box-shadow:-1px 0 0 #E8E8E8,-8px 0 32px rgba(0,0,0,.08)!important;',
@@ -295,7 +295,6 @@ function injectStyles(){
     '#__mc__ p,#__mc__ div,#__mc__ span,#__mc__ button{margin:0;padding:0;text-align:left}',
     '#__mc__ a{text-decoration:none;color:inherit}',
 
-    // Header
     '#__mc__ .__mc-hdr{display:flex;justify-content:space-between;align-items:center;',
     'padding:14px 18px;background:#fff;border-bottom:1px solid #EFEFEF;flex-shrink:0}',
     '#__mc__ .__mc-hdr-left{display:flex;align-items:center;gap:10px}',
@@ -309,21 +308,26 @@ function injectStyles(){
     'align-items:center;justify-content:center;transition:all .15s;flex-shrink:0;padding:0}',
     '#__mc__ .__mc-close:hover{background:#F5F5F5;color:#1A1A1A;border-color:#DDD}',
 
-    // Moodle bar
-    '#__mc__ .__mc-mbar{display:flex;align-items:center;gap:10px;padding:11px 18px;',
-    'background:#fff;border-bottom:1px solid #EFEFEF;flex-shrink:0}',
-    '#__mc__ .__mc-mbar-label{font-size:11px;color:#999;font-weight:500;flex-shrink:0;text-transform:uppercase;letter-spacing:.5px}',
+    // ===== Moodle секции — теперь СТОЛБИКОМ! =====
+    '#__mc__ .__mc-mbox{padding:12px 18px;background:#fff;border-bottom:1px solid #EFEFEF;flex-shrink:0;max-height:200px;overflow-y:auto}',
+    '#__mc__ .__mc-mbox::-webkit-scrollbar{width:3px}',
+    '#__mc__ .__mc-mbox::-webkit-scrollbar-thumb{background:#E0E0E0;border-radius:2px}',
+    '#__mc__ .__mc-mbox-head{display:flex;align-items:center;gap:8px;margin-bottom:8px}',
+    '#__mc__ .__mc-mbox-label{font-size:10px;color:#999;font-weight:700;text-transform:uppercase;letter-spacing:.5px}',
     '#__mc__ .__mc-mcount{display:inline-flex;align-items:center;justify-content:center;',
     'min-width:22px;height:22px;padding:0 7px;background:#1A1A1A;color:#fff;',
     'border-radius:11px;font-size:11px;font-weight:700;flex-shrink:0}',
-    '#__mc__ .__mc-mlist{font-size:11px;color:#666;flex:1;min-width:0;overflow:hidden;',
-    'text-overflow:ellipsis;white-space:nowrap}',
+    '#__mc__ .__mc-msec{display:flex;align-items:flex-start;gap:8px;padding:6px 0;',
+    'border-top:1px solid #F5F5F5;font-size:11.5px;color:#444;line-height:1.4}',
+    '#__mc__ .__mc-msec:first-of-type{border-top:none;padding-top:2px}',
+    '#__mc__ .__mc-msec-num{flex-shrink:0;width:18px;height:18px;border-radius:50%;',
+    'background:#F5F5F5;color:#666;font-size:10px;font-weight:700;display:flex;',
+    'align-items:center;justify-content:center;margin-top:1px}',
+    '#__mc__ .__mc-msec-text{flex:1;font-weight:500}',
 
-    // Files section
     '#__mc__ .__mc-files{padding:14px 18px;background:#fff;border-bottom:1px solid #EFEFEF;flex-shrink:0}',
     '#__mc__ .__mc-hint{font-size:11px;color:#AAA;margin:0 0 8px 0!important;font-weight:500}',
 
-    // File row
     '#__mc__ .__mc-frow{display:flex;align-items:center;gap:8px;padding:9px 11px;',
     'border:1px solid #EFEFEF;border-radius:10px;margin-bottom:5px;background:#FAFAFA;',
     'transition:all .15s}',
@@ -333,7 +337,6 @@ function injectStyles(){
     '#__mc__ .__mc-frow-name{flex:1;font-size:12px;color:#444;overflow:hidden;',
     'text-overflow:ellipsis;white-space:nowrap;font-weight:500}',
 
-    // Buttons
     '#__mc__ .__mc-fbtn{display:inline-flex;align-items:center;justify-content:center;',
     'width:28px;height:28px;border-radius:8px;cursor:pointer;transition:all .15s;',
     'border:none;flex-shrink:0;padding:0}',
@@ -342,23 +345,19 @@ function injectStyles(){
     '#__mc__ .__mc-fbtn-dark{background:#1A1A1A;color:#fff;border:1px solid #1A1A1A}',
     '#__mc__ .__mc-fbtn-dark:hover{background:#333}',
 
-    // Manual
     '#__mc__ .__mc-manual{margin-top:10px;padding-top:10px;border-top:1px solid #F5F5F5}',
     '#__mc__ .__mc-manual-label{font-size:11px;color:#BBB;display:block;margin-bottom:5px;font-weight:500}',
     '#__mc__ .__mc-manual input[type=file]{width:100%;font-size:11px;color:#888;cursor:pointer;padding:0}',
 
-    // Status
     '#__mc__ .__mc-st{display:flex;align-items:center;gap:6px;font-size:11px;',
     'margin-top:10px;min-height:16px;color:#CCC;font-weight:500}',
     '#__mc__ .__mc-st-ok{color:#16A34A}#__mc__ .__mc-st-e{color:#DC2626}#__mc__ .__mc-st-i{color:#3B82F6}',
     '#__mc__ .__mc-st-dot{width:6px;height:6px;border-radius:50%;background:currentColor;flex-shrink:0;display:inline-block}',
 
-    // Body
     '#__mc__ #__mcbody__{flex:1;overflow-y:auto;padding:18px}',
     '#__mc__ #__mcbody__::-webkit-scrollbar{width:4px}',
     '#__mc__ #__mcbody__::-webkit-scrollbar-thumb{background:#E0E0E0;border-radius:2px}',
 
-    // Loading
     '#__mc__ .__mc-loading{display:flex;flex-direction:column;align-items:center;justify-content:center;',
     'gap:14px;padding:48px 20px;color:#AAA;font-size:12px}',
     '#__mc__ .__mc-spinner{width:28px;height:28px;border:2.5px solid #EEE;border-top-color:#1A1A1A;',
@@ -369,7 +368,6 @@ function injectStyles(){
     '#__mc__ .__mc-empty p{color:#AAA;font-size:13px;margin:0 0 4px 0!important;font-weight:500}',
     '#__mc__ .__mc-empty small{font-size:11px;color:#CCC}',
 
-    // Summary
     '#__mc__ .__mc-summary{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:18px}',
     '#__mc__ .__mc-chip{display:inline-flex;align-items:center;gap:5px;padding:5px 11px;',
     'border-radius:20px;font-size:12px;font-weight:500;line-height:1}',
@@ -378,14 +376,12 @@ function injectStyles(){
     '#__mc__ .__mc-chip-err{background:#FEF2F2;color:#DC2626;border:1px solid #FECACA}',
     '#__mc__ .__mc-chip-warn{background:#FFFBEB;color:#D97706;border:1px solid #FED7AA}',
 
-    // Section labels
     '#__mc__ .__mc-section-label{font-size:10px;font-weight:700;letter-spacing:.8px;',
     'text-transform:uppercase;margin:18px 0 8px;padding-bottom:6px;border-bottom:1px solid #F0F0F0}',
     '#__mc__ .__mc-label-ok{color:#16A34A}',
     '#__mc__ .__mc-label-err{color:#DC2626}',
     '#__mc__ .__mc-label-warn{color:#D97706}',
 
-    // Result cards with stagger animation
     '#__mc__ .__mc-rcard{padding:11px 12px;border:1px solid #F0F0F0;border-radius:10px;',
     'margin-bottom:6px;background:#fff;opacity:0;transform:translateY(8px);',
     'animation:__mcin .3s ease forwards}',
@@ -397,14 +393,12 @@ function injectStyles(){
     '#__mc__ .__mc-rcard-title{font-size:12px;color:#1A1A1A;line-height:1.4;flex:1;font-weight:500}',
     '#__mc__ .__mc-rcard-sub{font-size:11px;color:#999;margin-top:5px;line-height:1.4;padding-left:42px}',
 
-    // Pct
     '#__mc__ .__mc-pct{flex-shrink:0;min-width:34px;padding:2px 7px;border-radius:6px;',
     'font-size:11px;font-weight:700;text-align:center;line-height:1.4}',
     '#__mc__ .__mc-pct-ok{background:#F0FDF4;color:#16A34A}',
     '#__mc__ .__mc-pct-warn{background:#FFFBEB;color:#D97706}',
     '#__mc__ .__mc-pct-err{background:#FEF2F2;color:#DC2626}',
 
-    // Reduced motion
     '@media (prefers-reduced-motion:reduce){',
     '#__mc__ .__mc-rcard{animation:none;opacity:1;transform:none}',
     '#__mc__ .__mc-spinner{animation:none}',
@@ -417,6 +411,18 @@ function buildUI(){
   var old=document.getElementById('__mc__');if(old)old.remove();
   injectStyles();
   var moodle=getMoodle();
+
+  // Список разделов столбиком
+  var moodleHtml='';
+  if(moodle.length){
+    moodle.forEach(function(s,i){
+      var clean=s.replace(/\s*\([^)]*\)\s*-?\s*\d*\s*сем\.?$/i,'').replace(/\s*\([^)]*\)$/,'').trim();
+      moodleHtml+='<div class="__mc-msec"><div class="__mc-msec-num">'+(i+1)+'</div>'
+        +'<div class="__mc-msec-text">'+esc(clean)+'</div></div>';
+    });
+  } else {
+    moodleHtml='<div style="color:#DC2626;font-size:11.5px;padding:6px 0">Разделы не найдены на странице</div>';
+  }
 
   var d=document.createElement('div');
   d.id='__mc__';
@@ -433,14 +439,12 @@ function buildUI(){
       +'</div>'
       +'<button class="__mc-close" onclick="document.getElementById(\'__mc__\').remove()">✕</button>'
     +'</div>'
-    +'<div class="__mc-mbar">'
-      +'<span class="__mc-mbar-label">Moodle</span>'
-      +'<span class="__mc-mcount">'+(moodle.length||0)+'</span>'
-      +'<div class="__mc-mlist">'
-        +(moodle.length
-          ? moodle.map(function(s){return esc(s.replace(/\s*\(.*$/,'').substring(0,22));}).join(' · ')
-          : '<span style="color:#DC2626">не найдено</span>')
+    +'<div class="__mc-mbox">'
+      +'<div class="__mc-mbox-head">'
+        +'<span class="__mc-mbox-label">Разделы в Moodle</span>'
+        +'<span class="__mc-mcount">'+(moodle.length||0)+'</span>'
       +'</div>'
+      +moodleHtml
     +'</div>'
     +'<div class="__mc-files">'
       +'<div id="__mclist__"><p class="__mc-hint">🔍 Ищу рабочие программы…</p></div>'
@@ -491,3 +495,7 @@ function buildUI(){
 buildUI();
 
 })();
+ENDJS
+
+echo "Размер: $(wc -c < /home/claude/moodle_v11.js)"
+node -e "try{new Function(require('fs').readFileSync('/home/claude/moodle_v11.js','utf8'));console.log('Синтаксис OK');}catch(e){console.log('ОШИБКА:',e.message);}"
