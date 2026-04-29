@@ -87,25 +87,43 @@ function loadPdfJs(callback){
   }
 
   var idx=0;
+
   function tryNext(){
     if(idx>=PDFJS_SOURCES.length){
-      callback(new Error('PDF.js не загрузился. CDN доступен, но библиотека не инициализировалась или заблокирована страницей.'));
+      callback(new Error('PDF.js загрузился, но Moodle/RequireJS не дал создать window.pdfjsLib. Попробуйте вариант с временным отключением define или Tampermonkey.'));
       return;
     }
 
     setStatus('Пробую источник '+(idx+1)+'/'+PDFJS_SOURCES.length+'…','i');
 
+    var oldDefine=window.define;
+    var oldExports=window.exports;
+    var oldModule=window.module;
+
+    try{
+      window.define=undefined;
+      window.exports=undefined;
+      window.module=undefined;
+    }catch(e){}
+
     var s=document.createElement('script');
     s.src=PDFJS_SOURCES[idx];
 
     s.onload=function(){
+      try{
+        window.define=oldDefine;
+        window.exports=oldExports;
+        window.module=oldModule;
+      }catch(e){}
+
       var tries=0;
       var t=setInterval(function(){
         var loadedLib=getPdfLib();
 
         if(loadedLib && typeof loadedLib.getDocument === 'function'){
-          window.pdfjsLib=loadedLib;
           clearInterval(t);
+
+          window.pdfjsLib=loadedLib;
 
           try{
             if(window.pdfjsLib.GlobalWorkerOptions){
@@ -124,6 +142,12 @@ function loadPdfJs(callback){
     };
 
     s.onerror=function(){
+      try{
+        window.define=oldDefine;
+        window.exports=oldExports;
+        window.module=oldModule;
+      }catch(e){}
+
       s.parentNode && s.parentNode.removeChild(s);
       idx++;
       tryNext();
