@@ -1,4 +1,3 @@
-cat > /home/claude/moodle_v11.js << 'ENDJS'
 (function(){
 
 // Несколько источников PDF.js — пробуем по очереди
@@ -495,7 +494,3 @@ function buildUI(){
 buildUI();
 
 })();
-ENDJS
-
-echo "Размер: $(wc -c < /home/claude/moodle_v11.js)"
-node -e "try{new Function(require('fs').readFileSync('/home/claude/moodle_v11.js','utf8'));console.log('Синтаксис OK');}catch(e){console.log('ОШИБКА:',e.message);}"
