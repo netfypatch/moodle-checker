@@ -70,53 +70,82 @@ function compare(txt,moodle){
 
 // ── PDF.JS — пробуем все источники по очереди ───────────────────────────────
 
+function getPdfLib(){
+  return window.pdfjsLib || window.pdfjsDistBuildPdf;
+}
+
 function loadPdfJs(callback){
-  if(window.pdfjsLib && typeof window.pdfjsLib.getDocument === 'function'){
+  var existingLib=getPdfLib();
+
+  if(existingLib && typeof existingLib.getDocument === 'function'){
+    window.pdfjsLib=existingLib;
     if(window.pdfjsLib.GlobalWorkerOptions){
       try{window.pdfjsLib.GlobalWorkerOptions.workerSrc=WORKER_SOURCES[0];}catch(e){}
     }
-    callback(null);return;
+    callback(null);
+    return;
   }
 
   var idx=0;
   function tryNext(){
     if(idx>=PDFJS_SOURCES.length){
-      callback(new Error('Все CDN заблокированы. Попробуйте отключить блокировщики или использовать другой браузер.'));
+      callback(new Error('PDF.js не загрузился. CDN доступен, но библиотека не инициализировалась или заблокирована страницей.'));
       return;
     }
+
     setStatus('Пробую источник '+(idx+1)+'/'+PDFJS_SOURCES.length+'…','i');
+
     var s=document.createElement('script');
     s.src=PDFJS_SOURCES[idx];
+
     s.onload=function(){
-      // ждём инициализации
       var tries=0;
       var t=setInterval(function(){
-        if(window.pdfjsLib && typeof window.pdfjsLib.getDocument === 'function'){
+        var loadedLib=getPdfLib();
+
+        if(loadedLib && typeof loadedLib.getDocument === 'function'){
+          window.pdfjsLib=loadedLib;
           clearInterval(t);
+
           try{
             if(window.pdfjsLib.GlobalWorkerOptions){
               window.pdfjsLib.GlobalWorkerOptions.workerSrc=WORKER_SOURCES[idx];
             }
           }catch(e){}
+
           callback(null);
-        } else if(++tries>30){
+        } else if(++tries>50){
           clearInterval(t);
           s.parentNode && s.parentNode.removeChild(s);
-          idx++;tryNext();
+          idx++;
+          tryNext();
         }
       },100);
     };
+
     s.onerror=function(){
       s.parentNode && s.parentNode.removeChild(s);
-      idx++;tryNext();
+      idx++;
+      tryNext();
     };
+
     document.head.appendChild(s);
   }
+
   tryNext();
 }
 
 function readPdf(buf,onDone,onErr){
   try{
+    if(!window.pdfjsLib && getPdfLib()){
+      window.pdfjsLib=getPdfLib();
+    }
+
+    if(!window.pdfjsLib || typeof window.pdfjsLib.getDocument !== 'function'){
+      onErr(new Error('pdfjsLib не найден'));
+      return;
+    }
+
     window.pdfjsLib.getDocument({data:buf}).promise.then(function(pdf){
       var limit=Math.min(pdf.numPages,15);
       var results=new Array(limit);
@@ -307,7 +336,6 @@ function injectStyles(){
     'align-items:center;justify-content:center;transition:all .15s;flex-shrink:0;padding:0}',
     '#__mc__ .__mc-close:hover{background:#F5F5F5;color:#1A1A1A;border-color:#DDD}',
 
-    // ===== Moodle секции — теперь СТОЛБИКОМ! =====
     '#__mc__ .__mc-mbox{padding:12px 18px;background:#fff;border-bottom:1px solid #EFEFEF;flex-shrink:0;max-height:200px;overflow-y:auto}',
     '#__mc__ .__mc-mbox::-webkit-scrollbar{width:3px}',
     '#__mc__ .__mc-mbox::-webkit-scrollbar-thumb{background:#E0E0E0;border-radius:2px}',
@@ -411,7 +439,6 @@ function buildUI(){
   injectStyles();
   var moodle=getMoodle();
 
-  // Список разделов столбиком
   var moodleHtml='';
   if(moodle.length){
     moodle.forEach(function(s,i){
