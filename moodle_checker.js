@@ -88,11 +88,12 @@ function compare(txt,moodle){
 
 function findGeneralSection(){
   var general=null;
+  var NAME_RE=/^(общее|общая\s+информация.*|рабочи[еая]\s+программ[аы]?|рпд)$/i;
   document.querySelectorAll(
     '.panel-heading,.section-header,h3.sectionname,.sectionname,'+
     '.accordion-heading,.panel-title'
   ).forEach(function(el){
-    if(!general&&/^общее$/i.test(el.textContent.trim())){
+    if(!general&&NAME_RE.test(el.textContent.trim())){
       var section=el.closest('li.section')||el.closest('[id^="section-"]');
       if(section){
         general=section;
@@ -103,6 +104,11 @@ function findGeneralSection(){
       }
     }
   });
+  // Если по имени не нашли — берём первый раздел страницы
+  if(!general){
+    general=document.getElementById('section-0')||
+            document.querySelector('li.section[id^="section-"]');
+  }
   return general;
 }
 
@@ -501,7 +507,9 @@ function injectStyles(){
     '#__mc__ .__mc-qlist::-webkit-scrollbar{width:3px}',
     '#__mc__ .__mc-qlist::-webkit-scrollbar-thumb{background:#E0E0E0;border-radius:2px}',
     // Files
-    '#__mc__ .__mc-files{padding:14px 18px;background:#fff;border-bottom:1px solid #EFEFEF;flex-shrink:0}',
+    '#__mc__ .__mc-files{padding:10px 18px 14px;background:#fff;border-bottom:1px solid #EFEFEF;flex-shrink:0}',
+    '#__mc__ .__mc-files-head{display:flex;align-items:center;gap:8px;cursor:pointer;user-select:none;margin-bottom:10px}',
+    '#__mc__ .__mc-files-head:hover .__mc-mbox-label{color:#555}',
     '#__mc__ .__mc-hint{font-size:11px;color:#AAA;margin:0 0 8px 0!important;font-weight:500}',
     '#__mc__ .__mc-frow{display:flex;align-items:center;gap:8px;padding:9px 11px;border:1px solid #EFEFEF;border-radius:10px;margin-bottom:5px;background:#FAFAFA;transition:all .15s}',
     '#__mc__ .__mc-frow:hover{border-color:#DDD;background:#F5F5F5}',
@@ -624,11 +632,17 @@ function buildUI(){
       +'</div>'
       +'<div class="__mc-qlist" id="__mcqlist__" style="display:none">'+quizHtml+'</div>'
     +'</div>'
-    // Файлы
+    // Файлы (сворачивается)
     +'<div class="__mc-files">'
-      +'<div id="__mclist__"><p class="__mc-hint">🔍 Ищу рабочие программы…</p></div>'
-      +'<div class="__mc-manual"><label class="__mc-manual-label">Или загрузите PDF вручную:</label>'
-      +'<input type="file" id="__mcfile__" accept=".pdf"></div>'
+      +'<div class="__mc-files-head" onclick="window.__mcFilesToggle__()">'
+        +'<span class="__mc-mbox-label">Рабочие программы</span>'
+        +'<span class="__mc-qarrow" id="__mcfarr__">▾</span>'
+      +'</div>'
+      +'<div id="__mc-files-body__">'
+        +'<div id="__mclist__"><p class="__mc-hint">🔍 Ищу рабочие программы…</p></div>'
+        +'<div class="__mc-manual"><label class="__mc-manual-label">Или загрузите PDF вручную:</label>'
+        +'<input type="file" id="__mcfile__" accept=".pdf"></div>'
+      +'</div>'
       +'<div class="__mc-st" id="__mcst__"></div>'
     +'</div>'
     // Табы + тело
@@ -661,6 +675,14 @@ function buildUI(){
     list.style.display=open?'':'none';
     arr.textContent=open?'▾':'▸';
     arr.style.transform=open?'rotate(0deg)':'';
+  };
+
+  window.__mcFilesToggle__=function(){
+    var body=document.getElementById('__mc-files-body__');
+    var arr=document.getElementById('__mcfarr__');
+    var open=body.style.display!=='none';
+    body.style.display=open?'none':'';
+    arr.textContent=open?'▸':'▾';
   };
 
   document.getElementById('__mcfile__').onchange=function(e){
